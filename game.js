@@ -1,82 +1,82 @@
- // Globalne promenljive
+ // --- FIREBASE IMPORTI ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+// --- TVOJA FIREBASE KONFIGURACIJA ---
+// ZAMENI OVO SVOJIM PODACIMA IZ FIREBASE KONZOLE!
+const firebaseConfig = {
+  apiKey: "AIzaSyC32E4b57QLyHMax4HCs59-CQX1eAm3d20",
+  authDomain: "lexa-91af4.firebaseapp.com",
+  projectId: "lexa-91af4",
+  storageBucket: "lexa-91af4.firebasestorage.app",
+  messagingSenderId: "1034127482216",
+  appId: "1:1034127482216:web:e1c85bebd4ca997c544add"
+};
+
+// Inicijalizacija Baze
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// Globalne promenljive
 window.isMusicOn = true;
 window.currentUser = localStorage.getItem('hoop_username') || null;
 
-// --- LEADERBOARD LOGIKA ---
-function getLeaderboard() {
-    let data = JSON.parse(localStorage.getItem('hoop_leaderboard'));
-    if (!data || (data.length > 0 && data[0].score > 6000)) {
-        data = [];
-        const botNames = ["Peasant", "Goblin", "Rat", "Wolf", "Bandit", "Guard", "Squire", "Novice", "Rookie", "Scout"];
-        for (let i = 0; i < 50; i++) { 
-            let name = botNames[Math.floor(Math.random() * botNames.length)] + Math.floor(Math.random() * 999);
-            let score = Math.floor(Math.random() * 500); 
-            data.push({ name: name, score: score });
-        }
-        data.sort((a, b) => b.score - a.score);
-        localStorage.setItem('hoop_leaderboard', JSON.stringify(data));
-    }
-    return data;
-}
-
-function savePlayerScore(score) {
+// --- LEADERBOARD LOGIKA (FIREBASE) ---
+async function savePlayerScore(score) {
     if (!window.currentUser) return;
-    let board = getLeaderboard();
-    let playerIndex = board.findIndex(p => p.name === window.currentUser);
-    
-    if (playerIndex !== -1) {
-        if (score > board[playerIndex].score) { board[playerIndex].score = score; }
-    } else {
-        board.push({ name: window.currentUser, score: score });
+    try {
+        const docRef = doc(db, "leaderboard", window.currentUser);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            if (score > docSnap.data().score) {
+                await setDoc(docRef, { name: window.currentUser, score: score });
+            }
+        } else {
+            await setDoc(docRef, { name: window.currentUser, score: score });
+        }
+    } catch (e) {
+        console.error("Greška pri čuvanju skora: ", e);
     }
-
-    board.sort((a, b) => b.score - a.score);
-    if (board.length > 1000) board = board.slice(0, 1000);
-    localStorage.setItem('hoop_leaderboard', JSON.stringify(board));
 }
 
-// --- 1. BOOT SCENE (TELEGRAM AUTO-LOGIN) ---
+async function getLeaderboardData() {
+    try {
+        const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(10));
+        const querySnapshot = await getDocs(q);
+        let board = [];
+        querySnapshot.forEach((doc) => { board.push(doc.data()); });
+        return board;
+    } catch (e) {
+        console.error("Greška: ", e);
+        return []; 
+    }
+}
+
+// --- 1. BOOT SCENE ---
 class BootScene extends Phaser.Scene {
     constructor() { super('BootScene'); }
     preload() { this.load.image('logo', 'assets/tower_rapid.webp'); }
-    
     create() {
-        this.add.text(400, 300, "HOOP DYNASTY\nConnecting...", { fontSize: '20px', fill: '#fff', align: 'center' }).setOrigin(0.5);
-        
+        this.add.text(400, 300, "LEXA\nConnecting to Server...", { fontSize: '20px', fill: '#fff', align: 'center' }).setOrigin(0.5);
         this.time.delayedCall(500, () => {
-            // 1. Provera da li smo na Telegramu
             const tg = window.Telegram?.WebApp;
-            
             if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
-                // TELEGRAM DETKTOVAN!
-                tg.ready(); // Javljamo Telegramu da je aplikacija spremna
-                tg.expand(); // Širimo aplikaciju na ceo ekran
-                
-                // Uzimamo ime sa Telegrama
+                tg.ready(); tg.expand(); 
                 let tgUser = tg.initDataUnsafe.user;
-                // Koristimo username ako postoji, inace first_name
                 let finalName = tgUser.username || tgUser.first_name;
-                
                 window.currentUser = finalName;
                 localStorage.setItem('hoop_username', finalName);
-                
-                // Osiguramo da je igrač u bazi
                 savePlayerScore(0);
-                
                 this.scene.start('MainMenuScene');
             } else {
-                // NISMO NA TELEGRAMU (Browser testiranje)
-                if (window.currentUser) { 
-                    this.scene.start('MainMenuScene'); 
-                } else { 
-                    this.scene.start('LoginScene'); 
-                }
+                if (window.currentUser) { this.scene.start('MainMenuScene'); } 
+                else { this.scene.start('LoginScene'); }
             }
         });
     }
 }
 
-// --- 2. LOGIN SCENE (FALLBACK ZA BROWSER) ---
+// --- 2. LOGIN SCENE ---
 class LoginScene extends Phaser.Scene {
     constructor() { super('LoginScene'); }
     create() {
@@ -85,24 +85,13 @@ class LoginScene extends Phaser.Scene {
 
         let btn = this.add.graphics().fillStyle(0x00ff00, 1).fillRoundedRect(300, 350, 200, 50, 10);
         this.add.text(400, 375, "ENTER NAME", { fontSize: '20px', fill: '#000', fontWeight: 'bold' }).setOrigin(0.5);
-        
         this.add.zone(400, 375, 200, 50).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.handleLogin());
     }
-
     handleLogin() {
-        let name = "";
-        let valid = false;
-        let board = getLeaderboard();
-
-        while (!valid) {
-            name = prompt("Username (3-12 chars):");
-            if (!name) return;
-            name = name.trim();
-            if (name.length < 3 || name.length > 12) { alert("Invalid length."); continue; }
-            let exists = board.some(p => p.name.toLowerCase() === name.toLowerCase());
-            if (exists) { alert("Username taken."); } else { valid = true; }
-        }
-
+        let name = prompt("Username (3-12 chars):");
+        if (!name) return;
+        name = name.trim();
+        if (name.length < 3 || name.length > 12) { alert("Name must be 3-12 characters."); return; }
         window.currentUser = name;
         localStorage.setItem('hoop_username', name);
         savePlayerScore(0);
@@ -116,38 +105,98 @@ class LeaderboardScene extends Phaser.Scene {
     create() {
         this.add.graphics().fillStyle(0x1a1a1a, 1).fillRect(0, 0, 800, 600);
         this.add.text(400, 50, "GLOBAL RANKING", { fontSize: '32px', fill: '#FFD700', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
+        
+        let loadingText = this.add.text(400, 300, "Loading scores...", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
 
-        let board = getLeaderboard();
-        let myRank = board.findIndex(p => p.name === window.currentUser) + 1;
+        getLeaderboardData().then(board => {
+            loadingText.destroy(); 
+            let startY = 120;
+            this.add.text(200, startY, "RANK", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(350, startY, "PLAYER", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(550, startY, "SCORE", { fontSize: '20px', fill: '#00ffff' });
 
-        let startY = 120;
-        this.add.text(200, startY, "RANK", { fontSize: '20px', fill: '#00ffff' });
-        this.add.text(350, startY, "PLAYER", { fontSize: '20px', fill: '#00ffff' });
-        this.add.text(550, startY, "SCORE", { fontSize: '20px', fill: '#00ffff' });
+            for (let i = 0; i < board.length; i++) {
+                let player = board[i];
+                let color = (player.name === window.currentUser) ? '#00ff00' : '#ffffff';
+                this.add.text(200, startY + 30 + (i * 30), `#${i + 1}`, { fontSize: '18px', fill: color });
+                this.add.text(350, startY + 30 + (i * 30), player.name, { fontSize: '18px', fill: color });
+                this.add.text(550, startY + 30 + (i * 30), player.score, { fontSize: '18px', fill: '#FFD700' });
+            }
 
-        for (let i = 0; i < 10; i++) {
-            if (i >= board.length) break;
-            let player = board[i];
-            let color = (player.name === window.currentUser) ? '#00ff00' : '#ffffff';
-            this.add.text(200, startY + 30 + (i * 30), `#${i + 1}`, { fontSize: '18px', fill: color });
-            this.add.text(350, startY + 30 + (i * 30), player.name, { fontSize: '18px', fill: color });
-            this.add.text(550, startY + 30 + (i * 30), player.score, { fontSize: '18px', fill: '#FFD700' });
+            let btn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 520, 200, 50, 10);
+            this.add.text(400, 545, "🔙 BACK", { fontSize: '24px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+            this.add.zone(400, 545, 200, 50).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('MainMenuScene'));
+        });
+    }
+}
+
+// --- NOVA SCENA: BEST SCORE ---
+class BestScoreScene extends Phaser.Scene {
+    constructor() { super('BestScoreScene'); }
+    create() {
+        this.add.graphics().fillStyle(0x1a1a1a, 1).fillRect(0, 0, 800, 600);
+        this.add.text(400, 100, "YOUR BEST SCORE", { fontSize: '48px', fill: '#FFD700', stroke: '#000', strokeThickness: 6, fontWeight: 'bold' }).setOrigin(0.5);
+
+        let loadingText = this.add.text(400, 300, "Loading...", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+
+        getLeaderboardData().then(board => {
+            loadingText.destroy();
+            let myData = board.find(p => p.name === window.currentUser);
+            let myScore = myData ? myData.score : 0;
+
+            this.add.text(400, 250, `WARRIOR: ${window.currentUser}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
+            this.add.text(400, 350, myScore.toString(), { fontSize: '80px', fill: '#fff', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5);
+        });
+
+        let btn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 500, 200, 50, 10);
+        this.add.text(400, 525, "🔙 BACK", { fontSize: '24px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+        this.add.zone(400, 525, 200, 50).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('MainMenuScene'));
+    }
+}
+
+// --- NOVA SCENA: BONUS ---
+class BonusScene extends Phaser.Scene {
+    constructor() { super('BonusScene'); }
+    create() {
+        this.add.graphics().fillStyle(0x1a1a1a, 1).fillRect(0, 0, 800, 600);
+        this.add.text(400, 100, "🎁 DAILY BONUS", { fontSize: '48px', fill: '#FFD700', stroke: '#000', strokeThickness: 6, fontWeight: 'bold' }).setOrigin(0.5);
+        this.add.text(400, 220, "Watch a short ad to earn +1 Extra Play!", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+
+        let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
+        let now = Date.now();
+        let canWatch = (now - adTs) >= 86400000; // 24 sata
+
+        // Promena boje u zavisnosti da li je reklama dostupna
+        let btnColor = canWatch ? 0x00ff00 : 0x555555;
+        let btnTextStr = canWatch ? "📺 WATCH AD" : "⏳ COME BACK LATER";
+
+        let adBtn = this.add.graphics().fillStyle(btnColor, 1).fillRoundedRect(250, 350, 300, 60, 15);
+        this.add.text(400, 380, btnTextStr, { fontSize: '28px', fill: '#000', fontWeight: 'bold' }).setOrigin(0.5);
+        
+        let zone = this.add.zone(400, 380, 300, 60);
+        
+        if (canWatch) {
+            zone.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+                // TODO: Ovde se ubacuje pravi Adsgram kod kasnije
+                alert("Simulacija: Odgledao si reklamu! Dobijaš +1 partiju za danas.");
+                localStorage.setItem('hoop_ad_watched_ts', Date.now());
+                this.scene.start('MainMenuScene');
+            });
+        } else {
+            let timeLeft = 86400000 - (now - adTs);
+            let hours = Math.ceil(timeLeft / (1000 * 60 * 60));
+            this.add.text(400, 440, `Next ad available in: ${hours} hours`, { fontSize: '20px', fill: '#ff0000' }).setOrigin(0.5);
         }
 
-        if (myRank > 0) {
-            this.add.graphics().lineStyle(2, 0x00ff00).strokeRect(150, 480, 500, 50);
-            this.add.text(400, 505, `YOUR RANK: #${myRank}   |   SCORE: ${board[myRank-1].score}`, { fontSize: '22px', fill: '#00ff00' }).setOrigin(0.5);
-        }
-
-        this.add.text(400, 560, "🔙 BACK TO MENU", { fontSize: '24px', fill: '#fff', backgroundColor: '#333', padding: 10 })
-            .setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('MainMenuScene'));
+        let backBtn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 520, 200, 50, 10);
+        this.add.text(400, 545, "🔙 BACK", { fontSize: '24px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+        this.add.zone(400, 545, 200, 50).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.scene.start('MainMenuScene'));
     }
 }
 
 // --- 4. MAIN MENU SCENE ---
 class MainMenuScene extends Phaser.Scene {
     constructor() { super('MainMenuScene'); }
-    
     preload() {
         this.load.image('map_bg', 'assets/map_bg.webp'); 
         this.load.image('base_building', 'assets/base_building.webp');
@@ -162,33 +211,40 @@ class MainMenuScene extends Phaser.Scene {
         this.load.image('bullet_sniper', 'assets/bullet_sniper.webp');
         this.load.audio('explosion_snd', 'assets/explosion.mp3');
     }
+    
+    getMaxGames() {
+        let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
+        let now = Date.now();
+        // Ako je reklama odgledana u poslednjih 24h, limit je 4, inace 3
+        return (now - adTs < 86400000) ? 4 : 3;
+    }
 
     create() {
         this.checkDailyLimit(); 
         this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setAlpha(0.3);
         
-        let title = this.add.text(400, 80, "HOOP DYNASTY", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
+        let title = this.add.text(400, 80, "LEXA", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
         this.add.text(400, 130, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
 
-        // Debug reset
         title.on('pointerdown', () => {
-            if(confirm("Dev: Reset Data?")) {
+            if(confirm("Dev: Reset All Data?")) {
                 localStorage.clear();
                 window.location.reload();
             }
         });
 
+        let maxGames = this.getMaxGames();
         let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
-        this.add.text(400, 160, `DAILY LIMIT: ${gamesPlayed}/3`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
+        this.add.text(400, 160, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
 
         let startY = 220, gap = 65;
         this.createMenuButton(400, startY, "🎮 START GAME", () => this.tryStartGame());
-        this.createMenuButton(400, startY + gap, "🏆 BEST SCORE", () => this.showBestScore());
+        this.createMenuButton(400, startY + gap, "🏆 BEST SCORE", () => this.scene.start('BestScoreScene'));
         this.createMenuButton(400, startY + gap * 2, "📊 LEADERBOARD", () => this.scene.start('LeaderboardScene'));
         this.musicBtnText = this.createMenuButton(400, startY + gap * 3, this.getMusicText(), () => this.toggleMusic());
-        this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => alert("Ads integration required!"));
+        this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => this.scene.start('BonusScene'));
 
-        this.add.text(400, 580, "v2.1 Mobile Ready", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(400, 580, "v3.2 Dynamic Limits", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
     }
 
     createMenuButton(x, y, text, callback) {
@@ -216,12 +272,19 @@ class MainMenuScene extends Phaser.Scene {
     }
 
     tryStartGame() {
+        let maxGames = this.getMaxGames();
         let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
         let now = Date.now();
-        if (gamesPlayed >= 3) {
+        
+        if (gamesPlayed >= maxGames) {
             let firstGameTs = parseInt(localStorage.getItem('hoop_first_game_ts') || 0);
             let hoursLeft = Math.ceil((86400000 - (now - firstGameTs)) / (1000 * 60 * 60));
-            alert(`⛔ LIMIT REACHED!\nWait ${hoursLeft} hours or click Title to reset.`);
+            
+            if (maxGames === 3) {
+                alert(`⛔ LIMIT REACHED!\nWatch an AD in the BONUS menu for +1 play, or wait ${hoursLeft} hours.`);
+            } else {
+                alert(`⛔ LIMIT REACHED!\nYou used all your plays including the bonus. Wait ${hoursLeft} hours.`);
+            }
         } else {
             if (gamesPlayed === 0) localStorage.setItem('hoop_first_game_ts', now);
             localStorage.setItem('hoop_daily_games', gamesPlayed + 1);
@@ -229,11 +292,6 @@ class MainMenuScene extends Phaser.Scene {
         }
     }
 
-    showBestScore() {
-        let board = getLeaderboard();
-        let myData = board.find(p => p.name === window.currentUser);
-        alert(`🎖️ BEST SCORE: ${myData ? myData.score : 0}`);
-    }
     toggleMusic() { window.isMusicOn = !window.isMusicOn; this.musicBtnText.setText(this.getMusicText()); }
     getMusicText() { return window.isMusicOn ? "🎵 MUSIC: ON" : "🔇 MUSIC: OFF"; }
 }
@@ -245,31 +303,25 @@ class GameScene extends Phaser.Scene {
         this.wave = 1; this.gold = 100; this.lives = 3; 
         this.score = 0; this.maxGold = 150; this.nukesAvailable = 1; this.monstersSpawned = 0;
     }
-
     create() {
         this.lives = 3; this.isGameOver = false; this.wave = 1; 
         this.gold = 100; this.score = 0; 
         this.monstersSpawned = 0; this.nukesAvailable = 1; this.slotsArray = [];
 
         this.mapImage = this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setDepth(0);
-        
         this.towers = this.physics.add.staticGroup();
         this.monsters = this.physics.add.group();
         this.bullets = this.physics.add.group();
-        
         this.baseImage = this.add.image(750, 500, 'base_building').setScale(0.45).setDepth(5);
 
         this.waveText = this.add.text(20, 20, "WAVE: 1/15", { fontSize: '22px', fill: '#fff', stroke: '#000', strokeThickness: 5 }).setDepth(101);
         this.goldText = this.add.text(20, 50, `GOLD: ${this.gold}/150`, { fontSize: '20px', fill: '#FFD700', stroke: '#000', strokeThickness: 5 }).setDepth(101);
         this.livesText = this.add.text(20, 80, "LIVES: ❤️❤️❤️", { fontSize: '18px', fill: '#ff0000', stroke: '#000', strokeThickness: 5 }).setDepth(101);
         this.scoreText = this.add.text(20, 110, "SCORE: 0", { fontSize: '20px', fill: '#ffffff', stroke: '#000', strokeThickness: 5 }).setDepth(101);
-
-        this.nukeBtn = this.add.text(20, 150, "☢️ NUKE", { fontSize: '18px', fill: '#ff0', backgroundColor: '#800', padding: 5, stroke: '#000', strokeThickness: 2 })
-            .setInteractive({ useHandCursor: true }).setDepth(101).on('pointerdown', () => this.launchNuke());
+        this.nukeBtn = this.add.text(20, 150, "☢️ NUKE", { fontSize: '18px', fill: '#ff0', backgroundColor: '#800', padding: 5, stroke: '#000', strokeThickness: 2 }).setInteractive({ useHandCursor: true }).setDepth(101).on('pointerdown', () => this.launchNuke());
 
         this.setupSlots();
         this.createBottomUI();
-
         this.input.on('pointerdown', (p) => { if (!this.isGameOver && p.y < 530) this.handleInput(p); });
         this.physics.add.overlap(this.bullets, this.monsters, this.damageMonster, null, this);
         this.startWave();
@@ -281,7 +333,6 @@ class GameScene extends Phaser.Scene {
         this.uiPanel.fillRect(0, 530, 800, 70);
         this.uiPanel.lineStyle(3, 0xFFD700, 1);
         this.uiPanel.lineBetween(0, 530, 800, 530);
-        
         this.uiElements = [];
 
         const uiConfig = [
@@ -296,7 +347,6 @@ class GameScene extends Phaser.Scene {
             box.strokeRoundedRect(conf.x, 540, 200, 50, 8);
             let t1 = this.add.text(conf.x + 100, 552, conf.label, { fontSize: '18px', fill: Phaser.Display.Color.IntegerToColor(conf.color).rgba, fontWeight: 'bold' }).setOrigin(0.5).setDepth(102);
             let t2 = this.add.text(conf.x + 100, 572, `Cost: ${conf.price}`, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(102);
-            
             this.uiElements.push(box, t1, t2);
         });
     }
@@ -428,31 +478,18 @@ class GameScene extends Phaser.Scene {
         if (this.lives <= 0) this.gameOver();
     }
 
-    saveScore() { savePlayerScore(this.score); }
-
     createEndGameButtons(msg, isVictory) {
-        // 1. SAKRIJ SAMO GAMEPLAY ELEMENTE
-        this.baseImage.setVisible(false);
-        this.towers.setVisible(false);
-        this.monsters.setVisible(false);
-        this.bullets.setVisible(false);
-        
-        this.waveText.setVisible(false);
-        this.goldText.setVisible(false);
-        this.livesText.setVisible(false);
-        this.scoreText.setVisible(false);
-        this.nukeBtn.setVisible(false);
-        
-        this.uiPanel.setVisible(false);
+        this.baseImage.setVisible(false); this.towers.setVisible(false);
+        this.monsters.setVisible(false); this.bullets.setVisible(false);
+        this.waveText.setVisible(false); this.goldText.setVisible(false);
+        this.livesText.setVisible(false); this.scoreText.setVisible(false);
+        this.nukeBtn.setVisible(false); this.uiPanel.setVisible(false);
         this.uiElements.forEach(el => el.setVisible(false));
         this.slotsArray.forEach(s => s.ringGraphics.setVisible(false));
 
-        // 2. POTAMNI MAPU (DA LIČI NA MENI)
-        this.mapImage.setAlpha(0.3); // Ne sakrivamo je, samo potamnjujemo
+        this.mapImage.setAlpha(0.3);
 
-        // 3. TEKST I DUGMIĆI
         let color = isVictory ? '#FFD700' : '#ff0000'; 
-
         this.add.text(400, 150, msg, { fontSize: '72px', fill: color, stroke: '#000', strokeThickness: 6, fontWeight: 'bold' }).setOrigin(0.5).setDepth(2001);
         this.add.text(400, 250, 'FINAL SCORE: ' + this.score, { fontSize: '42px', fill: '#fff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(2001);
 
@@ -468,13 +505,13 @@ class GameScene extends Phaser.Scene {
     }
 
     gameOver() {
-        this.saveScore(); 
+        savePlayerScore(this.score); 
         this.isGameOver = true; this.physics.pause();
         this.createEndGameButtons('GAME OVER', false);
     }
 
     victory() {
-        this.saveScore();
+        savePlayerScore(this.score);
         this.isGameOver = true; this.physics.pause();
         this.createEndGameButtons('🏆 VICTORY!', true);
     }
@@ -543,7 +580,7 @@ class GameScene extends Phaser.Scene {
     }
 }
 
-// SCALING SETTINGS (Za Telefon)
+// SCALING SETTINGS
 const config = { 
     type: Phaser.AUTO, 
     width: 800, 
@@ -554,7 +591,7 @@ const config = {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH
     },
-    scene: [BootScene, LoginScene, LeaderboardScene, MainMenuScene, GameScene] 
+    scene: [BootScene, LoginScene, LeaderboardScene, BestScoreScene, BonusScene, MainMenuScene, GameScene] 
 };
 
 new Phaser.Game(config);
