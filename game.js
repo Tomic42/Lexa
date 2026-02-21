@@ -239,7 +239,7 @@ class MainMenuScene extends Phaser.Scene {
         this.checkDailyLimit(); 
         this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setAlpha(0.3);
         
-        let title = this.add.text(400, 70, "HOOP DYNASTY", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
+        let title = this.add.text(400, 70, "LEXA", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
         this.add.text(400, 120, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
 
         title.on('pointerdown', () => {
@@ -272,7 +272,7 @@ class MainMenuScene extends Phaser.Scene {
     inviteFriends() {
         // Generišemo jedinstveni link za trenutnog igrača
         let inviteLink = `https://t.me/Lexa_TD_bot/LexaTD?startapp=${window.currentUser}`;
-        let text = `Brani kulu sa mnom u Hoop Dynasty! 🏰🔥 Uđi preko mog linka, osvoji poene i budi najbolji na tabeli!`;
+        let text = `Defend the tower with me in Hoop Dynasty! 🏰🔥 Enter through my link, win points and be the best in the table!`;
         
         // Formatiramo link za Telegram "Share" opciju
         let shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`;
