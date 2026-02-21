@@ -185,15 +185,15 @@ class BonusScene extends Phaser.Scene {
                     
                     AdController.show().then((result) => {
                         // KORISNIK JE ODGLEDAO REKLAMU DO KRAJA
-                        alert("Uspešno! Dobio si +1 partiju za danas.");
+                        alert("Successful! You have +1 round for today.");
                         localStorage.setItem('hoop_ad_watched_ts', Date.now());
                         this.scene.start('MainMenuScene');
                     }).catch((result) => {
                         // KORISNIK JE PREKINUO REKLAMU ILI TRENUTNO NEMA REKLAMA
-                        alert("Reklama je prekinuta ili trenutno nije dostupna. Pokušaj ponovo kasnije.");
+                        alert("The ad has been discontinued or is currently unavailable. Try again later.");
                     });
                 } else {
-                    alert("Adsgram sistem se još učitava, molimo sačekajte.");
+                    alert("Adsgram system is still loading, please wait.");
                 }
 
             });
