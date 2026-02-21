@@ -155,6 +155,7 @@ class BestScoreScene extends Phaser.Scene {
 }
 
 // --- NOVA SCENA: BONUS ---
+// --- NOVA SCENA: BONUS (SA ADSGRAM LOGIKOM) ---
 class BonusScene extends Phaser.Scene {
     constructor() { super('BonusScene'); }
     create() {
@@ -166,7 +167,6 @@ class BonusScene extends Phaser.Scene {
         let now = Date.now();
         let canWatch = (now - adTs) >= 86400000; // 24 sata
 
-        // Promena boje u zavisnosti da li je reklama dostupna
         let btnColor = canWatch ? 0x00ff00 : 0x555555;
         let btnTextStr = canWatch ? "📺 WATCH AD" : "⏳ COME BACK LATER";
 
@@ -177,10 +177,25 @@ class BonusScene extends Phaser.Scene {
         
         if (canWatch) {
             zone.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
-                // TODO: Ovde se ubacuje pravi Adsgram kod kasnije
-                alert("Simulacija: Odgledao si reklamu! Dobijaš +1 partiju za danas.");
-                localStorage.setItem('hoop_ad_watched_ts', Date.now());
-                this.scene.start('MainMenuScene');
+                
+                // Provera da li je Adsgram skripta ucitana iz index.html
+                if (window.Adsgram) {
+                    // INICIJALIZACIJA ADSGRAM REKLAME SA TVOJIM ID-jem (23446)
+                    const AdController = window.Adsgram.init({ blockId: "23446" }); 
+                    
+                    AdController.show().then((result) => {
+                        // KORISNIK JE ODGLEDAO REKLAMU DO KRAJA
+                        alert("Uspešno! Dobio si +1 partiju za danas.");
+                        localStorage.setItem('hoop_ad_watched_ts', Date.now());
+                        this.scene.start('MainMenuScene');
+                    }).catch((result) => {
+                        // KORISNIK JE PREKINUO REKLAMU ILI TRENUTNO NEMA REKLAMA
+                        alert("Reklama je prekinuta ili trenutno nije dostupna. Pokušaj ponovo kasnije.");
+                    });
+                } else {
+                    alert("Adsgram sistem se još učitava, molimo sačekajte.");
+                }
+
             });
         } else {
             let timeLeft = 86400000 - (now - adTs);
