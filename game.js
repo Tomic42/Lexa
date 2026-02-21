@@ -215,7 +215,7 @@ class MainMenuScene extends Phaser.Scene {
     constructor() { super('MainMenuScene'); }
     
     preload() {
-        this.load.image('map_bg', 'assets/map_bg.png'); 
+        this.load.image('map_bg', 'assets/map_bg.webp'); 
         this.load.image('base_building', 'assets/base_building.webp');
         this.load.image('tower_basic', 'assets/tower.webp');
         this.load.image('tower_sniper', 'assets/tower_sniper.webp');
