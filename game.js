@@ -210,10 +210,12 @@ class BonusScene extends Phaser.Scene {
 }
 
 // --- 4. MAIN MENU SCENE ---
+// --- 4. MAIN MENU SCENE ---
 class MainMenuScene extends Phaser.Scene {
     constructor() { super('MainMenuScene'); }
+    
     preload() {
-        this.load.image('map_bg', 'assets/map_bg.webp'); 
+        this.load.image('map_bg', 'assets/map_bg.png'); 
         this.load.image('base_building', 'assets/base_building.webp');
         this.load.image('tower_basic', 'assets/tower.webp');
         this.load.image('tower_sniper', 'assets/tower_sniper.webp');
@@ -230,7 +232,6 @@ class MainMenuScene extends Phaser.Scene {
     getMaxGames() {
         let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
         let now = Date.now();
-        // Ako je reklama odgledana u poslednjih 24h, limit je 4, inace 3
         return (now - adTs < 86400000) ? 4 : 3;
     }
 
@@ -238,8 +239,8 @@ class MainMenuScene extends Phaser.Scene {
         this.checkDailyLimit(); 
         this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setAlpha(0.3);
         
-        let title = this.add.text(400, 80, "LEXA", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
-        this.add.text(400, 130, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
+        let title = this.add.text(400, 70, "HOOP DYNASTY", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
+        this.add.text(400, 120, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
 
         title.on('pointerdown', () => {
             if(confirm("Dev: Reset All Data?")) {
@@ -250,16 +251,38 @@ class MainMenuScene extends Phaser.Scene {
 
         let maxGames = this.getMaxGames();
         let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
-        this.add.text(400, 160, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
+        this.add.text(400, 150, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
 
-        let startY = 220, gap = 65;
+        // Smanjili smo razmake (gap) i podigli startnu poziciju da stane 6 dugmića
+        let startY = 200, gap = 58; 
+        
         this.createMenuButton(400, startY, "🎮 START GAME", () => this.tryStartGame());
         this.createMenuButton(400, startY + gap, "🏆 BEST SCORE", () => this.scene.start('BestScoreScene'));
         this.createMenuButton(400, startY + gap * 2, "📊 LEADERBOARD", () => this.scene.start('LeaderboardScene'));
         this.musicBtnText = this.createMenuButton(400, startY + gap * 3, this.getMusicText(), () => this.toggleMusic());
         this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => this.scene.start('BonusScene'));
+        
+        // --- NOVO DUGME ZA REFERALE ---
+        this.createMenuButton(400, startY + gap * 5, "🤝 INVITE FRIENDS", () => this.inviteFriends());
 
-        this.add.text(400, 580, "v3.2 Dynamic Limits", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(400, 580, "v4.0 Invite System", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+    }
+
+    // --- LOGIKA ZA TELEGRAM INVITACIJU ---
+    inviteFriends() {
+        // Generišemo jedinstveni link za trenutnog igrača
+        let inviteLink = `https://t.me/Lexa_TD_bot/LexaTD?startapp=${window.currentUser}`;
+        let text = `Brani kulu sa mnom u Hoop Dynasty! 🏰🔥 Uđi preko mog linka, osvoji poene i budi najbolji na tabeli!`;
+        
+        // Formatiramo link za Telegram "Share" opciju
+        let shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`;
+        
+        // Pozivamo Telegram da otvori imenik
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.openTelegramLink(shareUrl);
+        } else {
+            window.open(shareUrl, '_blank'); // Fallback ako nije u Telegramu
+        }
     }
 
     createMenuButton(x, y, text, callback) {
