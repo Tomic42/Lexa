@@ -13,29 +13,73 @@ const firebaseConfig = {
   appId: "1:1034127482216:web:e1c85bebd4ca997c544add"
 };
 
-// Inicijalizacija Baze
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Globalne promenljive
 window.isMusicOn = true;
 window.currentUser = localStorage.getItem('hoop_username') || null;
+window.myReferrals = 0; 
 
-// --- LEADERBOARD LOGIKA (FIREBASE) ---
-async function savePlayerScore(score) {
+// --- LEADERBOARD & REFERRAL LOGIKA ---
+async function savePlayerScore(score, referrer = null) {
     if (!window.currentUser) return;
     try {
         const docRef = doc(db, "leaderboard", window.currentUser);
         const docSnap = await getDoc(docRef);
+        
         if (docSnap.exists()) {
-            if (score > docSnap.data().score) {
-                await setDoc(docRef, { name: window.currentUser, score: score });
+            let data = docSnap.data();
+            window.myReferrals = data.referrals || 0; 
+            
+            // --- NOVA MATEMATIKA ZA BONUSE ---
+            let bonusPct = 0;
+            if (window.myReferrals >= 20) bonusPct = 0.25;
+            else if (window.myReferrals >= 15) bonusPct = 0.20;
+            else if (window.myReferrals >= 10) bonusPct = 0.12;
+            else if (window.myReferrals >= 5) bonusPct = 0.07;
+            else if (window.myReferrals >= 1) bonusPct = 0.03;
+            
+            let multiplier = 1 + bonusPct;
+            let finalScore = Math.floor(score * multiplier);
+
+            if (finalScore > data.score) {
+                await setDoc(docRef, { score: finalScore, rawScore: score }, { merge: true });
             }
         } else {
-            await setDoc(docRef, { name: window.currentUser, score: score });
+            // NOVI IGRAČ
+            window.myReferrals = 0;
+            await setDoc(docRef, { 
+                name: window.currentUser, 
+                score: score, 
+                rawScore: score,
+                referrals: 0,
+                referredBy: referrer || "none"
+            });
+
+            // --- ANTI-CHEAT REFERRAL LOGIKA ---
+            if (referrer && referrer !== window.currentUser) {
+                const refDoc = doc(db, "leaderboard", referrer);
+                const refSnap = await getDoc(refDoc);
+                if (refSnap.exists()) {
+                    let refData = refSnap.data();
+                    let currentRefs = refData.referrals || 0;
+                    let referredList = refData.referredList || []; // Učitavamo spisak
+
+                    // Proveravamo da li je novi igrač već dao bod ovom refereru!
+                    if (!referredList.includes(window.currentUser)) {
+                        referredList.push(window.currentUser); // Dodajemo ga na spisak
+                        await setDoc(refDoc, { 
+                            referrals: currentRefs + 1,
+                            referredList: referredList
+                        }, { merge: true });
+                    } else {
+                        console.log("Anti-cheat: Ovaj igrac je vec iskoriscen kao referal!");
+                    }
+                }
+            }
         }
     } catch (e) {
-        console.error("Greška pri čuvanju skora: ", e);
+        console.error("Greška pri radu sa bazom: ", e);
     }
 }
 
@@ -57,19 +101,27 @@ class BootScene extends Phaser.Scene {
     constructor() { super('BootScene'); }
     preload() { this.load.image('logo', 'assets/tower_rapid.webp'); }
     create() {
-        this.add.text(400, 300, "LEXA\nConnecting to Server...", { fontSize: '20px', fill: '#fff', align: 'center' }).setOrigin(0.5);
-        this.time.delayedCall(500, () => {
+        this.add.text(400, 300, "Lexa\nConnecting to Server...", { fontSize: '20px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+        
+        this.time.delayedCall(500, async () => {
             const tg = window.Telegram?.WebApp;
             if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
                 tg.ready(); tg.expand(); 
                 let tgUser = tg.initDataUnsafe.user;
                 let finalName = tgUser.username || tgUser.first_name;
+                
+                let startParam = tg.initDataUnsafe.start_param || null;
+
                 window.currentUser = finalName;
                 localStorage.setItem('hoop_username', finalName);
-                savePlayerScore(0);
+                
+                await savePlayerScore(0, startParam);
                 this.scene.start('MainMenuScene');
             } else {
-                if (window.currentUser) { this.scene.start('MainMenuScene'); } 
+                if (window.currentUser) { 
+                    await savePlayerScore(0, null);
+                    this.scene.start('MainMenuScene'); 
+                } 
                 else { this.scene.start('LoginScene'); }
             }
         });
@@ -87,14 +139,15 @@ class LoginScene extends Phaser.Scene {
         this.add.text(400, 375, "ENTER NAME", { fontSize: '20px', fill: '#000', fontWeight: 'bold' }).setOrigin(0.5);
         this.add.zone(400, 375, 200, 50).setInteractive({ useHandCursor: true }).on('pointerdown', () => this.handleLogin());
     }
-    handleLogin() {
+    async handleLogin() {
         let name = prompt("Username (3-12 chars):");
         if (!name) return;
         name = name.trim();
         if (name.length < 3 || name.length > 12) { alert("Name must be 3-12 characters."); return; }
+        
         window.currentUser = name;
         localStorage.setItem('hoop_username', name);
-        savePlayerScore(0);
+        await savePlayerScore(0, null);
         this.scene.start('MainMenuScene');
     }
 }
@@ -105,22 +158,25 @@ class LeaderboardScene extends Phaser.Scene {
     create() {
         this.add.graphics().fillStyle(0x1a1a1a, 1).fillRect(0, 0, 800, 600);
         this.add.text(400, 50, "GLOBAL RANKING", { fontSize: '32px', fill: '#FFD700', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
-        
         let loadingText = this.add.text(400, 300, "Loading scores...", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
 
         getLeaderboardData().then(board => {
             loadingText.destroy(); 
             let startY = 120;
-            this.add.text(200, startY, "RANK", { fontSize: '20px', fill: '#00ffff' });
-            this.add.text(350, startY, "PLAYER", { fontSize: '20px', fill: '#00ffff' });
-            this.add.text(550, startY, "SCORE", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(150, startY, "RANK", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(300, startY, "PLAYER", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(500, startY, "REFS", { fontSize: '20px', fill: '#00ffff' });
+            this.add.text(650, startY, "SCORE", { fontSize: '20px', fill: '#00ffff' });
 
             for (let i = 0; i < board.length; i++) {
                 let player = board[i];
                 let color = (player.name === window.currentUser) ? '#00ff00' : '#ffffff';
-                this.add.text(200, startY + 30 + (i * 30), `#${i + 1}`, { fontSize: '18px', fill: color });
-                this.add.text(350, startY + 30 + (i * 30), player.name, { fontSize: '18px', fill: color });
-                this.add.text(550, startY + 30 + (i * 30), player.score, { fontSize: '18px', fill: '#FFD700' });
+                let refs = player.referrals || 0;
+                
+                this.add.text(150, startY + 30 + (i * 30), `#${i + 1}`, { fontSize: '18px', fill: color });
+                this.add.text(300, startY + 30 + (i * 30), player.name, { fontSize: '18px', fill: color });
+                this.add.text(500, startY + 30 + (i * 30), `${refs} 👥`, { fontSize: '18px', fill: '#ffaa00' });
+                this.add.text(650, startY + 30 + (i * 30), player.score, { fontSize: '18px', fill: '#FFD700' });
             }
 
             let btn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 520, 200, 50, 10);
@@ -143,9 +199,21 @@ class BestScoreScene extends Phaser.Scene {
             loadingText.destroy();
             let myData = board.find(p => p.name === window.currentUser);
             let myScore = myData ? myData.score : 0;
+            let rawScore = myData ? (myData.rawScore || myScore) : 0;
+            let myRefs = myData ? (myData.referrals || 0) : 0;
 
-            this.add.text(400, 250, `WARRIOR: ${window.currentUser}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
-            this.add.text(400, 350, myScore.toString(), { fontSize: '80px', fill: '#fff', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5);
+            let bonusPct = 0;
+            if (myRefs >= 20) bonusPct = 25;
+            else if (myRefs >= 15) bonusPct = 20;
+            else if (myRefs >= 10) bonusPct = 12;
+            else if (myRefs >= 5) bonusPct = 7;
+            else if (myRefs >= 1) bonusPct = 3;
+
+            this.add.text(400, 220, `WARRIOR: ${window.currentUser}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
+            this.add.text(400, 320, myScore.toString(), { fontSize: '80px', fill: '#fff', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5);
+            
+            // Prikaz tačne matematike igraču
+            this.add.text(400, 400, `(Base: ${rawScore} | Bonus: +${bonusPct}%)`, { fontSize: '18px', fill: '#ffaa00' }).setOrigin(0.5);
         });
 
         let btn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 500, 200, 50, 10);
@@ -155,7 +223,6 @@ class BestScoreScene extends Phaser.Scene {
 }
 
 // --- NOVA SCENA: BONUS ---
-// --- NOVA SCENA: BONUS (SA ADSGRAM LOGIKOM) ---
 class BonusScene extends Phaser.Scene {
     constructor() { super('BonusScene'); }
     create() {
@@ -165,7 +232,7 @@ class BonusScene extends Phaser.Scene {
 
         let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
         let now = Date.now();
-        let canWatch = (now - adTs) >= 86400000; // 24 sata
+        let canWatch = (now - adTs) >= 86400000; 
 
         let btnColor = canWatch ? 0x00ff00 : 0x555555;
         let btnTextStr = canWatch ? "📺 WATCH AD" : "⏳ COME BACK LATER";
@@ -177,25 +244,18 @@ class BonusScene extends Phaser.Scene {
         
         if (canWatch) {
             zone.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
-                
-                // Provera da li je Adsgram skripta ucitana iz index.html
                 if (window.Adsgram) {
-                    // INICIJALIZACIJA ADSGRAM REKLAME SA TVOJIM ID-jem (23446)
                     const AdController = window.Adsgram.init({ blockId: "23446" }); 
-                    
                     AdController.show().then((result) => {
-                        // KORISNIK JE ODGLEDAO REKLAMU DO KRAJA
-                        alert("Successful! You have +1 round for today.");
+                        alert("Successful! You got +1 game for today.");
                         localStorage.setItem('hoop_ad_watched_ts', Date.now());
                         this.scene.start('MainMenuScene');
                     }).catch((result) => {
-                        // KORISNIK JE PREKINUO REKLAMU ILI TRENUTNO NEMA REKLAMA
                         alert("The ad has been discontinued or is currently unavailable. Try again later.");
                     });
                 } else {
                     alert("Adsgram system is still loading, please wait.");
                 }
-
             });
         } else {
             let timeLeft = 86400000 - (now - adTs);
@@ -210,10 +270,8 @@ class BonusScene extends Phaser.Scene {
 }
 
 // --- 4. MAIN MENU SCENE ---
-// --- 4. MAIN MENU SCENE ---
 class MainMenuScene extends Phaser.Scene {
     constructor() { super('MainMenuScene'); }
-    
     preload() {
         this.load.image('map_bg', 'assets/map_bg.webp'); 
         this.load.image('base_building', 'assets/base_building.webp');
@@ -239,8 +297,10 @@ class MainMenuScene extends Phaser.Scene {
         this.checkDailyLimit(); 
         this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setAlpha(0.3);
         
-        let title = this.add.text(400, 70, "LEXA", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
-        this.add.text(400, 120, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
+        let title = this.add.text(400, 50, "Lexa", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
+        
+        this.add.text(400, 100, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
+        this.add.text(400, 130, `👥 REFERRALS: ${window.myReferrals}`, { fontSize: '20px', fill: '#ffaa00', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
 
         title.on('pointerdown', () => {
             if(confirm("Dev: Reset All Data?")) {
@@ -251,37 +311,28 @@ class MainMenuScene extends Phaser.Scene {
 
         let maxGames = this.getMaxGames();
         let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
-        this.add.text(400, 150, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
+        this.add.text(400, 160, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
 
-        // Smanjili smo razmake (gap) i podigli startnu poziciju da stane 6 dugmića
-        let startY = 200, gap = 58; 
+        let startY = 210, gap = 58; 
         
         this.createMenuButton(400, startY, "🎮 START GAME", () => this.tryStartGame());
         this.createMenuButton(400, startY + gap, "🏆 BEST SCORE", () => this.scene.start('BestScoreScene'));
         this.createMenuButton(400, startY + gap * 2, "📊 LEADERBOARD", () => this.scene.start('LeaderboardScene'));
         this.musicBtnText = this.createMenuButton(400, startY + gap * 3, this.getMusicText(), () => this.toggleMusic());
         this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => this.scene.start('BonusScene'));
-        
-        // --- NOVO DUGME ZA REFERALE ---
         this.createMenuButton(400, startY + gap * 5, "🤝 INVITE FRIENDS", () => this.inviteFriends());
 
-        this.add.text(400, 580, "v4.0 Invite System", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(400, 580, "v4.2 Anti-Cheat", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
     }
 
-    // --- LOGIKA ZA TELEGRAM INVITACIJU ---
     inviteFriends() {
-        // Generišemo jedinstveni link za trenutnog igrača
         let inviteLink = `https://t.me/Lexa_TD_bot/LexaTD?startapp=${window.currentUser}`;
         let text = `Defend the tower with me in Hoop Dynasty! 🏰🔥 Enter through my link, win points and be the best in the table!`;
-        
-        // Formatiramo link za Telegram "Share" opciju
         let shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`;
-        
-        // Pozivamo Telegram da otvori imenik
         if (window.Telegram && window.Telegram.WebApp) {
             window.Telegram.WebApp.openTelegramLink(shareUrl);
         } else {
-            window.open(shareUrl, '_blank'); // Fallback ako nije u Telegramu
+            window.open(shareUrl, '_blank'); 
         }
     }
 
@@ -317,7 +368,6 @@ class MainMenuScene extends Phaser.Scene {
         if (gamesPlayed >= maxGames) {
             let firstGameTs = parseInt(localStorage.getItem('hoop_first_game_ts') || 0);
             let hoursLeft = Math.ceil((86400000 - (now - firstGameTs)) / (1000 * 60 * 60));
-            
             if (maxGames === 3) {
                 alert(`⛔ LIMIT REACHED!\nWatch an AD in the BONUS menu for +1 play, or wait ${hoursLeft} hours.`);
             } else {
@@ -418,6 +468,7 @@ class GameScene extends Phaser.Scene {
     spawn() {
         if (this.isGameOver) return;
         let baseHp = 60 + (this.wave * 20); 
+        // NAGRADE ZA UBIJANJE: obican = 5, brzi = 8, teski = 12 golda
         let type = 'monster', speed = 90, reward = 5, scoreReward = 5, scale = 0.22;
         let rnd = Phaser.Math.Between(1, 100);
 
@@ -618,7 +669,6 @@ class GameScene extends Phaser.Scene {
     }
 }
 
-// SCALING SETTINGS
 const config = { 
     type: Phaser.AUTO, 
     width: 800, 
