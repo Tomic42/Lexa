@@ -452,10 +452,10 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    setupSlots() {
+   setupSlots() {
         const slots = [
             {x:100, y:230, t:'basic'}, {x:290, y:170, t:'basic'}, {x:500, y:170, t:'basic'},
-            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:620, y:430, t:'basic'},
+            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:700, y:430, t:'basic'}, // Vraćena poslednja kula desno (x:700)
             {x:100, y:370, t:'sniper'}, {x:300, y:250, t:'sniper'}, {x:650, y:100, t:'sniper'}, {x:750, y:250, t:'sniper'},
             {x:50, y:380, t:'rapid'}, {x:400, y:170, t:'rapid'}, {x:510, y:310, t:'rapid'}
         ];
