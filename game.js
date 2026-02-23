@@ -3,14 +3,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebas
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
 
 // --- TVOJA FIREBASE KONFIGURACIJA ---
-// ZAMENI OVO SVOJIM PODACIMA IZ FIREBASE KONZOLE!
 const firebaseConfig = {
-  apiKey: "AIzaSyC32E4b57QLyHMax4HCs59-CQX1eAm3d20",
-  authDomain: "lexa-91af4.firebaseapp.com",
-  projectId: "lexa-91af4",
-  storageBucket: "lexa-91af4.firebasestorage.app",
-  messagingSenderId: "1034127482216",
-  appId: "1:1034127482216:web:e1c85bebd4ca997c544add"
+    apiKey: "AIzaSyC32E4b57QLyHMax4HCs59-CQX1eAm3d20",
+    authDomain: "lexa-91af4.firebaseapp.com",
+    projectId: "lexa-91af4",
+    storageBucket: "lexa-91af4.firebasestorage.app",
+    messagingSenderId: "1034127482216",
+    appId: "1:1034127482216:web:e1c85bebd4ca997c544add"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -18,68 +17,102 @@ const db = getFirestore(app);
 
 window.isMusicOn = true;
 window.currentUser = localStorage.getItem('hoop_username') || null;
-window.myReferrals = 0; 
 
-// --- LEADERBOARD & REFERRAL LOGIKA ---
-async function savePlayerScore(score, referrer = null) {
+// --- CLOUD DATA OBJEKAT ---
+window.userData = {
+    dailyGames: 0,
+    firstGameTs: 0,
+    adWatchedTs: 0,
+    referrals: 0,
+    score: 0,
+    rawScore: 0
+};
+
+// --- LEADERBOARD & CLOUD SYNC LOGIKA ---
+async function initUserData(referrer = null) {
     if (!window.currentUser) return;
     try {
         const docRef = doc(db, "leaderboard", window.currentUser);
         const docSnap = await getDoc(docRef);
-        
+        let now = Date.now();
+
         if (docSnap.exists()) {
             let data = docSnap.data();
-            window.myReferrals = data.referrals || 0; 
-            
-            // --- NOVA MATEMATIKA ZA BONUSE ---
-            let bonusPct = 0;
-            if (window.myReferrals >= 20) bonusPct = 0.25;
-            else if (window.myReferrals >= 15) bonusPct = 0.20;
-            else if (window.myReferrals >= 10) bonusPct = 0.12;
-            else if (window.myReferrals >= 5) bonusPct = 0.07;
-            else if (window.myReferrals >= 1) bonusPct = 0.03;
-            
-            let multiplier = 1 + bonusPct;
-            let finalScore = Math.floor(score * multiplier);
+            window.userData.referrals = data.referrals || 0;
+            window.userData.score = data.score || 0;
+            window.userData.rawScore = data.rawScore || 0;
+            window.userData.adWatchedTs = data.adWatchedTs || 0;
+            window.userData.firstGameTs = data.firstGameTs || 0;
+            window.userData.dailyGames = data.dailyGames || 0;
 
-            if (finalScore > data.score) {
-                await setDoc(docRef, { score: finalScore, rawScore: score }, { merge: true });
+            if (window.userData.firstGameTs > 0 && (now - window.userData.firstGameTs > 86400000)) {
+                window.userData.dailyGames = 0;
+                window.userData.firstGameTs = 0;
+                await setDoc(docRef, { dailyGames: 0, firstGameTs: 0 }, { merge: true });
             }
         } else {
-            // NOVI IGRAČ
-            window.myReferrals = 0;
+            window.userData = { dailyGames: 0, firstGameTs: 0, adWatchedTs: 0, referrals: 0, score: 0, rawScore: 0 };
             await setDoc(docRef, { 
                 name: window.currentUser, 
-                score: score, 
-                rawScore: score,
+                score: 0, 
+                rawScore: 0,
                 referrals: 0,
-                referredBy: referrer || "none"
+                referredBy: referrer || "none",
+                referredList: [],
+                dailyGames: 0,
+                firstGameTs: 0,
+                adWatchedTs: 0
             });
 
-            // --- ANTI-CHEAT REFERRAL LOGIKA ---
             if (referrer && referrer !== window.currentUser) {
                 const refDoc = doc(db, "leaderboard", referrer);
                 const refSnap = await getDoc(refDoc);
                 if (refSnap.exists()) {
                     let refData = refSnap.data();
-                    let currentRefs = refData.referrals || 0;
-                    let referredList = refData.referredList || []; // Učitavamo spisak
-
-                    // Proveravamo da li je novi igrač već dao bod ovom refereru!
+                    let referredList = refData.referredList || [];
                     if (!referredList.includes(window.currentUser)) {
-                        referredList.push(window.currentUser); // Dodajemo ga na spisak
+                        referredList.push(window.currentUser);
                         await setDoc(refDoc, { 
-                            referrals: currentRefs + 1,
+                            referrals: (refData.referrals || 0) + 1,
                             referredList: referredList
                         }, { merge: true });
-                    } else {
-                        console.log("Anti-cheat: Ovaj igrac je vec iskoriscen kao referal!");
                     }
                 }
             }
         }
-    } catch (e) {
-        console.error("Greška pri radu sa bazom: ", e);
+    } catch (e) { console.error("Greška pri sinhronizaciji: ", e); }
+}
+
+async function updateFirebaseField(field, value) {
+    if (!window.currentUser) return;
+    window.userData[field] = value; 
+    try {
+        const docRef = doc(db, "leaderboard", window.currentUser);
+        await setDoc(docRef, { [field]: value }, { merge: true });
+    } catch (e) { console.error("Greška pri upisu u bazu: ", e); }
+}
+
+async function savePlayerScore(score) {
+    if (!window.currentUser) return;
+    
+    let bonusPct = 0;
+    let refs = window.userData.referrals;
+    if (refs >= 20) bonusPct = 0.25;
+    else if (refs >= 15) bonusPct = 0.20;
+    else if (refs >= 10) bonusPct = 0.12;
+    else if (refs >= 5) bonusPct = 0.07;
+    else if (refs >= 1) bonusPct = 0.03;
+    
+    let multiplier = 1 + bonusPct;
+    let finalScore = Math.floor(score * multiplier);
+
+    if (finalScore > window.userData.score) {
+        window.userData.score = finalScore;
+        window.userData.rawScore = score;
+        try {
+            const docRef = doc(db, "leaderboard", window.currentUser);
+            await setDoc(docRef, { score: finalScore, rawScore: score }, { merge: true });
+        } catch(e) { console.error(e); }
     }
 }
 
@@ -90,10 +123,7 @@ async function getLeaderboardData() {
         let board = [];
         querySnapshot.forEach((doc) => { board.push(doc.data()); });
         return board;
-    } catch (e) {
-        console.error("Greška: ", e);
-        return []; 
-    }
+    } catch (e) { return []; }
 }
 
 // --- 1. BOOT SCENE ---
@@ -109,17 +139,16 @@ class BootScene extends Phaser.Scene {
                 tg.ready(); tg.expand(); 
                 let tgUser = tg.initDataUnsafe.user;
                 let finalName = tgUser.username || tgUser.first_name;
-                
                 let startParam = tg.initDataUnsafe.start_param || null;
 
                 window.currentUser = finalName;
                 localStorage.setItem('hoop_username', finalName);
                 
-                await savePlayerScore(0, startParam);
+                await initUserData(startParam);
                 this.scene.start('MainMenuScene');
             } else {
                 if (window.currentUser) { 
-                    await savePlayerScore(0, null);
+                    await initUserData(null);
                     this.scene.start('MainMenuScene'); 
                 } 
                 else { this.scene.start('LoginScene'); }
@@ -147,7 +176,7 @@ class LoginScene extends Phaser.Scene {
         
         window.currentUser = name;
         localStorage.setItem('hoop_username', name);
-        await savePlayerScore(0, null);
+        await initUserData(null);
         this.scene.start('MainMenuScene');
     }
 }
@@ -193,28 +222,20 @@ class BestScoreScene extends Phaser.Scene {
         this.add.graphics().fillStyle(0x1a1a1a, 1).fillRect(0, 0, 800, 600);
         this.add.text(400, 100, "YOUR BEST SCORE", { fontSize: '48px', fill: '#FFD700', stroke: '#000', strokeThickness: 6, fontWeight: 'bold' }).setOrigin(0.5);
 
-        let loadingText = this.add.text(400, 300, "Loading...", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+        let myScore = window.userData.score;
+        let rawScore = window.userData.rawScore;
+        let myRefs = window.userData.referrals;
 
-        getLeaderboardData().then(board => {
-            loadingText.destroy();
-            let myData = board.find(p => p.name === window.currentUser);
-            let myScore = myData ? myData.score : 0;
-            let rawScore = myData ? (myData.rawScore || myScore) : 0;
-            let myRefs = myData ? (myData.referrals || 0) : 0;
+        let bonusPct = 0;
+        if (myRefs >= 20) bonusPct = 25;
+        else if (myRefs >= 15) bonusPct = 20;
+        else if (myRefs >= 10) bonusPct = 12;
+        else if (myRefs >= 5) bonusPct = 7;
+        else if (myRefs >= 1) bonusPct = 3;
 
-            let bonusPct = 0;
-            if (myRefs >= 20) bonusPct = 25;
-            else if (myRefs >= 15) bonusPct = 20;
-            else if (myRefs >= 10) bonusPct = 12;
-            else if (myRefs >= 5) bonusPct = 7;
-            else if (myRefs >= 1) bonusPct = 3;
-
-            this.add.text(400, 220, `WARRIOR: ${window.currentUser}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
-            this.add.text(400, 320, myScore.toString(), { fontSize: '80px', fill: '#fff', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5);
-            
-            // Prikaz tačne matematike igraču
-            this.add.text(400, 400, `(Base: ${rawScore} | Bonus: +${bonusPct}%)`, { fontSize: '18px', fill: '#ffaa00' }).setOrigin(0.5);
-        });
+        this.add.text(400, 220, `WARRIOR: ${window.currentUser}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
+        this.add.text(400, 320, myScore.toString(), { fontSize: '80px', fill: '#fff', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5);
+        this.add.text(400, 400, `(Base: ${rawScore} | Bonus: +${bonusPct}%)`, { fontSize: '18px', fill: '#ffaa00' }).setOrigin(0.5);
 
         let btn = this.add.graphics().fillStyle(0x333333, 1).fillRoundedRect(300, 500, 200, 50, 10);
         this.add.text(400, 525, "🔙 BACK", { fontSize: '24px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
@@ -230,7 +251,7 @@ class BonusScene extends Phaser.Scene {
         this.add.text(400, 100, "🎁 DAILY BONUS", { fontSize: '48px', fill: '#FFD700', stroke: '#000', strokeThickness: 6, fontWeight: 'bold' }).setOrigin(0.5);
         this.add.text(400, 220, "Watch a short ad to earn +1 Extra Play!", { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
 
-        let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
+        let adTs = window.userData.adWatchedTs;
         let now = Date.now();
         let canWatch = (now - adTs) >= 86400000; 
 
@@ -248,7 +269,7 @@ class BonusScene extends Phaser.Scene {
                     const AdController = window.Adsgram.init({ blockId: "23446" }); 
                     AdController.show().then((result) => {
                         alert("Successful! You got +1 game for today.");
-                        localStorage.setItem('hoop_ad_watched_ts', Date.now());
+                        updateFirebaseField('adWatchedTs', Date.now());
                         this.scene.start('MainMenuScene');
                     }).catch((result) => {
                         alert("The ad has been discontinued or is currently unavailable. Try again later.");
@@ -288,19 +309,18 @@ class MainMenuScene extends Phaser.Scene {
     }
     
     getMaxGames() {
-        let adTs = parseInt(localStorage.getItem('hoop_ad_watched_ts') || 0);
+        let adTs = window.userData.adWatchedTs; 
         let now = Date.now();
         return (now - adTs < 86400000) ? 4 : 3;
     }
 
     create() {
-        this.checkDailyLimit(); 
         this.add.image(400, 300, 'map_bg').setDisplaySize(800, 600).setAlpha(0.3);
         
         let title = this.add.text(400, 50, "Lexa", { fontSize: '64px', fill: '#FFD700', stroke: '#000', strokeThickness: 8, fontWeight: 'bold' }).setOrigin(0.5).setInteractive();
         
         this.add.text(400, 100, `PLAYER: ${window.currentUser}`, { fontSize: '20px', fill: '#00ff00' }).setOrigin(0.5);
-        this.add.text(400, 130, `👥 REFERRALS: ${window.myReferrals}`, { fontSize: '20px', fill: '#ffaa00', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+        this.add.text(400, 130, `👥 REFERRALS: ${window.userData.referrals}`, { fontSize: '20px', fill: '#ffaa00', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
 
         title.on('pointerdown', () => {
             if(confirm("Dev: Reset All Data?")) {
@@ -310,7 +330,7 @@ class MainMenuScene extends Phaser.Scene {
         });
 
         let maxGames = this.getMaxGames();
-        let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
+        let gamesPlayed = window.userData.dailyGames;
         this.add.text(400, 160, `DAILY LIMIT: ${gamesPlayed}/${maxGames}`, { fontSize: '18px', fill: '#00ffff' }).setOrigin(0.5);
 
         let startY = 210, gap = 58; 
@@ -322,7 +342,7 @@ class MainMenuScene extends Phaser.Scene {
         this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => this.scene.start('BonusScene'));
         this.createMenuButton(400, startY + gap * 5, "🤝 INVITE FRIENDS", () => this.inviteFriends());
 
-        this.add.text(400, 580, "v4.2 Anti-Cheat", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(400, 580, "v0.1 Beta", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
     }
 
     inviteFriends() {
@@ -351,22 +371,13 @@ class MainMenuScene extends Phaser.Scene {
         return btnText;
     }
 
-    checkDailyLimit() {
-        let now = Date.now();
-        let firstGameTs = parseInt(localStorage.getItem('hoop_first_game_ts') || 0);
-        if (now - firstGameTs > 86400000) {
-            localStorage.setItem('hoop_daily_games', 0);
-            localStorage.removeItem('hoop_first_game_ts');
-        }
-    }
-
     tryStartGame() {
         let maxGames = this.getMaxGames();
-        let gamesPlayed = parseInt(localStorage.getItem('hoop_daily_games') || 0);
+        let gamesPlayed = window.userData.dailyGames;
         let now = Date.now();
         
         if (gamesPlayed >= maxGames) {
-            let firstGameTs = parseInt(localStorage.getItem('hoop_first_game_ts') || 0);
+            let firstGameTs = window.userData.firstGameTs;
             let hoursLeft = Math.ceil((86400000 - (now - firstGameTs)) / (1000 * 60 * 60));
             if (maxGames === 3) {
                 alert(`⛔ LIMIT REACHED!\nWatch an AD in the BONUS menu for +1 play, or wait ${hoursLeft} hours.`);
@@ -374,8 +385,10 @@ class MainMenuScene extends Phaser.Scene {
                 alert(`⛔ LIMIT REACHED!\nYou used all your plays including the bonus. Wait ${hoursLeft} hours.`);
             }
         } else {
-            if (gamesPlayed === 0) localStorage.setItem('hoop_first_game_ts', now);
-            localStorage.setItem('hoop_daily_games', gamesPlayed + 1);
+            if (gamesPlayed === 0) {
+                updateFirebaseField('firstGameTs', now);
+            }
+            updateFirebaseField('dailyGames', gamesPlayed + 1);
             this.scene.start('GameScene');
         }
     }
@@ -442,7 +455,7 @@ class GameScene extends Phaser.Scene {
     setupSlots() {
         const slots = [
             {x:100, y:230, t:'basic'}, {x:290, y:170, t:'basic'}, {x:500, y:170, t:'basic'},
-            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:700, y:430, t:'basic'},
+            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:620, y:430, t:'basic'},
             {x:100, y:370, t:'sniper'}, {x:300, y:250, t:'sniper'}, {x:650, y:100, t:'sniper'}, {x:750, y:250, t:'sniper'},
             {x:50, y:380, t:'rapid'}, {x:400, y:170, t:'rapid'}, {x:510, y:310, t:'rapid'}
         ];
@@ -468,7 +481,7 @@ class GameScene extends Phaser.Scene {
     spawn() {
         if (this.isGameOver) return;
         let baseHp = 60 + (this.wave * 20); 
-        // NAGRADE ZA UBIJANJE: obican = 5, brzi = 8, teski = 12 golda
+        
         let type = 'monster', speed = 90, reward = 5, scoreReward = 5, scale = 0.22;
         let rnd = Phaser.Math.Between(1, 100);
 
