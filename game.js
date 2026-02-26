@@ -18,6 +18,20 @@ const db = getFirestore(app);
 window.isMusicOn = true;
 window.currentUser = localStorage.getItem('hoop_username') || null;
 
+// --- SIMULACIJA WEB3 EKONOMIJE ---
+// 1. Simuliramo da igrač poseduje NFT kule u svom novčaniku (za test)
+window.myNFTs = {
+    hasArcher: true, // uvek tačno za F2P
+    hasRapid: true,  // otključava Rare i Epic šansu
+    hasSniper: true  // otključava Legendary šansu
+};
+
+// 2. Simuliramo Server dnevnu kvotu (da sprečimo Pool Draining)
+window.dailyLootQuota = {
+    legendary: 1, // Može pasti maksimalno 1 Legendary danas
+    epic: 3       // Maksimalno 3 Epic danas
+};
+
 // --- CLOUD DATA OBJEKAT ---
 window.userData = {
     dailyGames: 0,
@@ -342,12 +356,12 @@ class MainMenuScene extends Phaser.Scene {
         this.createMenuButton(400, startY + gap * 4, "🎁 BONUS", () => this.scene.start('BonusScene'));
         this.createMenuButton(400, startY + gap * 5, "🤝 INVITE FRIENDS", () => this.inviteFriends());
 
-        this.add.text(400, 580, "v0.1 Beta", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(400, 580, "v0.1 Beta (Web3 Drops)", { fontSize: '14px', fill: '#888' }).setOrigin(0.5);
     }
 
     inviteFriends() {
         let inviteLink = `https://t.me/Lexa_TD_bot/LexaTD?startapp=${window.currentUser}`;
-        let text = `Defend the tower with me in Hoop Dynasty! 🏰🔥 Enter through my link, win points and be the best in the table!`;
+        let text = `Defend the tower with me in Lexa! 🏰🔥 Enter through my link, win points and be the best in the table!`;
         let shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(text)}`;
         if (window.Telegram && window.Telegram.WebApp) {
             window.Telegram.WebApp.openTelegramLink(shareUrl);
@@ -452,10 +466,10 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-   setupSlots() {
+    setupSlots() {
         const slots = [
             {x:100, y:230, t:'basic'}, {x:290, y:170, t:'basic'}, {x:500, y:170, t:'basic'},
-            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:700, y:430, t:'basic'}, // Vraćena poslednja kula desno (x:700)
+            {x:260, y:430, t:'basic'}, {x:500, y:430, t:'basic'}, {x:700, y:430, t:'basic'}, 
             {x:100, y:370, t:'sniper'}, {x:300, y:250, t:'sniper'}, {x:650, y:100, t:'sniper'}, {x:750, y:250, t:'sniper'},
             {x:50, y:380, t:'rapid'}, {x:400, y:170, t:'rapid'}, {x:510, y:310, t:'rapid'}
         ];
@@ -482,6 +496,7 @@ class GameScene extends Phaser.Scene {
         if (this.isGameOver) return;
         let baseHp = 60 + (this.wave * 20); 
         
+        // ZLATNE NAGRADE KAO STO SI TRAZIO
         let type = 'monster', speed = 90, reward = 5, scoreReward = 5, scale = 0.22;
         let rnd = Phaser.Math.Between(1, 100);
 
@@ -547,14 +562,59 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    // --- NOVA LOGIKA ZA RNG DROPOVE KAD MONSTER UMRE ---
+    rollForLoot() {
+        // Namerno smanjeno na 1-100 za potrebe tvog testiranja! (U produkciji će biti 100000)
+        let roll = Phaser.Math.Between(1, 100); 
+        
+        // F2P uvek ima makar malu šansu za Common (20% za test)
+        let commonChance = 20; 
+        
+        // AKO IGRAČ IMA NFT: otključava šanse!
+        let rareChance = window.myNFTs.hasRapid ? 10 : 0; 
+        let epicChance = window.myNFTs.hasRapid ? 5 : 0; 
+        let legendaryChance = window.myNFTs.hasSniper ? 2 : 0; 
+
+        // Ako igrač ima SVE kule, ima najveće moguće šanse (i dalje zavisi od Dnevne Kvote)
+        if (roll <= legendaryChance && window.dailyLootQuota.legendary > 0) {
+            window.dailyLootQuota.legendary--;
+            return { text: "🟡 LEGENDARY NFT!", color: '#FFD700' };
+        } 
+        else if (roll <= epicChance && window.dailyLootQuota.epic > 0) {
+            window.dailyLootQuota.epic--;
+            return { text: "🟣 EPIC NFT!", color: '#ff00ff' }; // Magenta/Ljubičasta
+        } 
+        else if (roll <= rareChance) {
+            return { text: "🔵 RARE NFT", color: '#00ffff' }; // Cyan/Plava
+        } 
+        else if (roll <= commonChance) {
+            return { text: "⚪ COMMON NFT", color: '#ffffff' };
+        }
+
+        return null; // Nije imao sreće ovaj put
+    }
+
+    showLootDrop(text, color, x, y) {
+        let t = this.add.text(x, y - 20, text, { fontSize: '20px', fill: color, stroke: '#000', strokeThickness: 4, fontWeight: 'bold' }).setDepth(150);
+        this.tweens.add({ targets: t, y: y - 80, alpha: 0, duration: 2500, onComplete: () => t.destroy() });
+    }
+
     damageMonster(bullet, monster) {
         if (bullet.targetMonster !== monster) return;
         if (window.isMusicOn) { this.sound.play('explosion_snd', { volume: 0.1 }); }
         bullet.destroy(); monster.hp -= bullet.damage;
+        
         if (monster.hp <= 0) { 
             this.earnGold(Math.floor(monster.reward), monster.x, monster.y); 
             this.score += monster.scoreReward;
             this.scoreText.setText("SCORE: " + this.score);
+            
+            // --- OVO POKREĆE BACANJE KOCKICE ZA LOOT! ---
+            let loot = this.rollForLoot();
+            if(loot) {
+                this.showLootDrop(loot.text, loot.color, monster.x, monster.y);
+            }
+
             this.cleanupMonster(monster); 
         }
     }
